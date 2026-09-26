@@ -13,6 +13,15 @@ app.innerHTML = `
     <label>後 <input id="post" type="number" min="1" max="60" value="5" inputmode="numeric" /> 秒</label>
   </div>
   <div class="row">
+    <label>サイズの基準
+      <select id="sizeSource">
+        <option value="video" selected>映像要素</option>
+        <option value="frame">フレーム</option>
+      </select>
+    </label>
+    <canvas id="thumb" width="0" height="0"></canvas>
+  </div>
+  <div class="row">
     <button id="start">録画開始</button>
     <button id="stop" disabled>停止</button>
   </div>
@@ -51,9 +60,14 @@ const addClip = (clip: Clip) => {
   div.className = 'clip';
   div.innerHTML = `
     <div>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</div>
+    <div class="playerDim"></div>
     <video src="${clip.url}" controls playsinline preload="metadata"></video>
     <div class="row"><button data-act="share">共有/保存</button><button data-act="del">削除</button></div>
   `;
+  const player = div.querySelector('video')!;
+  player.addEventListener('loadedmetadata', () => {
+    div.querySelector('.playerDim')!.textContent = `プレーヤーが認識したサイズ ${player.videoWidth}x${player.videoHeight}`;
+  });
   div.querySelector('[data-act="share"]')!.addEventListener('click', async () => {
     const file = new File([clip.blob], `highlight-${clip.id}.mp4`, { type: 'video/mp4' });
     try {
@@ -89,7 +103,10 @@ startBtn.addEventListener('click', async () => {
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       audio: true,
     });
-    await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx);
+    await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx, {
+      sizeSource: $<HTMLSelectElement>('#sizeSource').value === 'frame' ? 'frame' : 'video',
+      thumb: $<HTMLCanvasElement>('#thumb'),
+    });
     resetMarkBadge();
     stopBtn.disabled = false;
     markBtn.disabled = false;

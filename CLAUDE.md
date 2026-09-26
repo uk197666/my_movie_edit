@@ -44,6 +44,12 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - カメラ取得が NotAllowedError で失敗した場合は、iPhone 設定 → アプリ → Safari → カメラ/マイクを「許可」にする
 - 方式は案1(WebCodecs + 循環バッファ)に決定。実装は [src/recorder.ts](src/recorder.ts)、MP4 化は mediabunny
 
+## 音声(AAC)の注意
+
+- Safari の AudioEncoder は `decoderConfig.description` に ES_Descriptor(39B)を返す。MP4 の esds には AudioSpecificConfig(2B、48kHz モノラルなら `11 88`)だけを入れる必要があり、そのまま入れると iPhone で音声が無音扱いになる
+- [src/recorder.ts](src/recorder.ts) の `extractAudioSpecificConfig` で取り出してから mediabunny に渡している(実機で音声入りを確認済み)
+- iOS の AudioContext は、タップ操作の中で作成・resume しないと動かないことがある
+
 ## 向きの扱い
 
 - 保存動画の向きは撮影時の映像サイズに従う(縦で撮れば縦、横で撮れば横)

@@ -163,7 +163,7 @@ export class Recorder {
     this.stream = stream;
     video.srcObject = stream;
     await video.play();
-    this.configureVideo(video.videoWidth & ~1, video.videoHeight & ~1);
+    // エンコーダは最初のフレームの実サイズで作る(video.videoWidth は向きの反映が遅れることがあるため当てにしない)
 
     try {
       await this.startAudio(stream, audioCtx);
@@ -187,7 +187,8 @@ export class Recorder {
       video.requestVideoFrameCallback(loop);
     };
     video.requestVideoFrameCallback(loop);
-    this.onLog(`録画開始 ${this.epoch.width}x${this.epoch.height}`);
+    const ts = stream.getVideoTracks()[0]?.getSettings();
+    this.onLog(`録画開始 track=${ts?.width}x${ts?.height} video要素=${video.videoWidth}x${video.videoHeight}`);
   }
 
   // 停止・再開始をまたいで前回の状態(バッファ、音声のタイムスタンプ、AAC設定など)を持ち越さないよう初期化する
@@ -200,6 +201,7 @@ export class Recorder {
     this.aMeta = undefined;
     this.aMetaRaw = undefined;
     this.lastKeyTs = -Infinity;
+    this.epoch = { id: this.epoch.id, width: 0, height: 0 }; // 次のフレームでエンコーダを作り直させる
     this.vRing = [];
     this.aRing = [];
     this.pending = [];
@@ -241,8 +243,12 @@ export class Recorder {
   }
 
   // 向きが変わったら、待機中のハイライトをそこまでで確定し、バッファを捨てて新しい向きで撮り直す
-  private onOrientationChange(width: number, height: number) {
-    this.onLog(`向き変更 ${this.epoch.width}x${this.epoch.height} → ${width}x${height}`);
+  private onOrientationChange(width: number, height: number, video: HTMLVideoElement) {
+    const first = this.epoch.width === 0;
+    this.onLog(
+      `${first ? '映像サイズ確定' : `向き変更 ${this.epoch.width}x${this.epoch.height} →`} ${width}x${height} ` +
+        `(video要素=${video.videoWidth}x${video.videoHeight})`,
+    );
     for (const p of this.pending.splice(0)) {
       p.endTs = Math.min(p.endTs, this.lastVideoTs);
       this.mux(p).catch((e) => this.onLog(`MP4化失敗: ${e}`));
@@ -253,20 +259,25 @@ export class Recorder {
   }
 
   private captureFrame(video: HTMLVideoElement, now: number) {
-    const width = video.videoWidth & ~1;
-    const height = video.videoHeight & ~1;
-    if (width > 0 && height > 0 && (width !== this.epoch.width || height !== this.epoch.height)) {
-      this.onOrientationChange(width, height);
-    }
-    const venc = this.venc!;
-    if (venc.encodeQueueSize > 6) {
+    if (this.venc && this.venc.encodeQueueSize > 6) {
       this.dropped++;
       return;
     }
     const ts = Math.round(now * 1000);
+    const frame = new VideoFrame(video, { timestamp: ts, duration: 33_333 });
+    // フレーム自身のサイズで向きを判定する。エンコーダの設定サイズとフレームのサイズが違うと、映像が引き伸ばされて保存される
+    const width = frame.displayWidth & ~1;
+    const height = frame.displayHeight & ~1;
+    if (width > 0 && height > 0 && (width !== this.epoch.width || height !== this.epoch.height)) {
+      this.onOrientationChange(width, height, video);
+    }
+    const venc = this.venc;
+    if (!venc) {
+      frame.close();
+      return;
+    }
     const key = ts - this.lastKeyTs >= KEY_INTERVAL_US;
     if (key) this.lastKeyTs = ts;
-    const frame = new VideoFrame(video, { timestamp: ts, duration: 33_333 });
     venc.encode(frame, { keyFrame: key });
     frame.close();
 

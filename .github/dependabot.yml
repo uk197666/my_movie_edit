@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # npm の依存パッケージ(mediabunny, vite, typescript など)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # GitHub Actions(コミット SHA で固定しているため、更新は Dependabot の PR で行う)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

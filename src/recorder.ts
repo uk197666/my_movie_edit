@@ -98,19 +98,8 @@ const KEY_INTERVAL_US = 1_000_000;
 const AUDIO_BATCH_SAMPLES = 2048;
 const AUDIO_WAIT_LIMIT_US = 2_000_000;
 
-const WORKLET_CODE = `
-class Cap extends AudioWorkletProcessor {
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (ch) {
-      const copy = ch.slice(0);
-      this.port.postMessage(copy, [copy.buffer]);
-    }
-    return true;
-  }
-}
-registerProcessor('cap', Cap);
-`;
+// マイク入力の PCM を取り出す AudioWorklet。CSP を厳しく保つため Blob URL ではなく public/ の静的ファイルを読み込む
+const WORKLET_URL = `${import.meta.env.BASE_URL}audio-capture-worklet.js`;
 
 export class Recorder {
   private running = false;
@@ -307,9 +296,7 @@ export class Recorder {
     if (ctx.state !== 'running') await ctx.resume();
     if (ctx.state !== 'running') this.onLog(`AudioContext が running になりません(${ctx.state})`);
 
-    const url = URL.createObjectURL(new Blob([WORKLET_CODE], { type: 'text/javascript' }));
-    await ctx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
+    await ctx.audioWorklet.addModule(WORKLET_URL);
 
     const aenc = new AudioEncoder({
       output: (chunk, meta) => this.onAudioChunk(chunk, meta),
@@ -391,8 +378,10 @@ export class Recorder {
   private onAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) {
     this.audioChunkCount++;
     if (this.audioChunkCount === 1) {
-      const head = new Uint8Array(4);
-      chunk.copyTo(head.subarray(0, Math.min(4, chunk.byteLength)));
+      // copyTo の出力先はチャンク全体が入る大きさが必要(小さいと例外になり、この出力コールバック全体が失敗する)
+      const all = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(all);
+      const head = all.subarray(0, 4);
       const cfg = meta?.decoderConfig;
       const desc = cfg?.description ? toBytes(cfg.description) : undefined;
       this.onLog(

@@ -1,4 +1,5 @@
 // spike: 循環バッファ録画 + ハイライト切り出しの実機検証画面(iPhone Safari)
+import './style.css';
 import { Recorder, type Clip } from './recorder';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;

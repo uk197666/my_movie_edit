@@ -54,6 +54,18 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - ホーム画面から起動したアプリは、Safari とは別のサイトデータとして扱われ、カメラ/マイクの許可を改めて聞かれることがある
 - ログは既定で閉じた折りたたみセクション。失敗・エラーを含むログが出たときだけ自動で開く
 
+## セキュリティ
+
+- 動画はサーバーに送らず端末内で処理する。外部への通信・外部読み込みは一切ない
+- CSP: [vite.config.ts](vite.config.ts) のプラグインで、ビルド時だけ meta タグとして挿入(GitHub Pages は HTTP ヘッダーを設定できないため。開発サーバーには付けない)。`default-src 'none'` を基本に、必要なものだけ許可している。そのため次のルールを守る
+  - インラインの `<script>` / `<style>` / `style="..."` 属性は使わない(CSS は [src/style.css](src/style.css))。JS からの `el.style.xxx = ...` は可
+  - AudioWorklet は Blob URL ではなく静的ファイル [public/audio-capture-worklet.js](public/audio-capture-worklet.js) を読み込む
+  - 外部の CDN・フォント・API を追加しない(必要になったら CSP を見直す)
+  - `frame-ancestors` は meta では効かないため未設定
+- GitHub Actions は [.github/workflows/deploy.yml](.github/workflows/deploy.yml) でコミット SHA に固定している(コメントにバージョン)。更新は [.github/dependabot.yml](.github/dependabot.yml) の Dependabot(npm と Actions、週次)が出す PR で行う
+- 公開先 `uk197666.github.io` は、同じアカウントの他の Pages サイトと同一オリジン。カメラ/マイクの許可や localStorage が共有されるため、このアカウントの Pages には信頼できるサイトだけを置く。GitHub アカウントの 2 要素認証も有効にしておく
+- 検証: CSP 付きビルドを `vite preview` で動かし、Edge(フェイクカメラ)で録画 → ハイライト → クリップ生成まで CSP 違反 0 件で通ることを確認済み
+
 ## ストレージ・メモリ方針(確定)
 
 - ストレージとメモリはできるだけ使わない。ストレージに残すのは、ユーザが写真アプリに保存したクリップだけ

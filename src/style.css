@@ -1,0 +1,32 @@
+html, body { max-width: 100%; overflow-x: hidden; }
+/* クリップの映像は元サイズのまま表示すると横にはみ出し、iOS Safari がページ全体を縮小表示してしまう */
+.clip video { display: block; width: 100%; max-height: 60vh; object-fit: contain; background: #000; border-radius: 8px; }
+body { margin: 0; padding: 0 16px calc(32px + env(safe-area-inset-bottom)); font-family: system-ui, sans-serif; background: #111; color: #eee; }
+h1 { font-size: 18px; margin: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 16px 0 8px; }
+.note { font-size: 12px; color: #ffb454; }
+#stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+#preview { display: block; width: 100%; max-height: 70vh; object-fit: contain; }
+button { font-size: 16px; padding: 12px 16px; border-radius: 8px; border: 0; background: #2a6df4; color: #fff; touch-action: manipulation; }
+button:disabled { background: #444; color: #888; }
+#mark {
+  position: absolute; right: 12px; bottom: 12px; width: 64px; height: 64px; padding: 0;
+  border-radius: 50%; font-size: 30px; line-height: 1; background: #e5484d; color: #fff;
+  border: 3px solid #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+#mark:disabled { background: rgba(80, 80, 80, 0.8); border-color: #aaa; color: #aaa; }
+#mark.flash { animation: flash 0.4s ease-out; }
+@keyframes flash { 0% { transform: scale(1.35); box-shadow: 0 0 0 10px rgba(255, 255, 255, 0.7); } 100% { transform: scale(1); } }
+#badge {
+  position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 11px; background: #fff; color: #e5484d; font-size: 13px; font-weight: bold; line-height: 22px;
+}
+#level { height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+#levelBar { height: 100%; width: 0; background: #3ddc84; }
+input { width: 56px; font-size: 16px; padding: 6px; }
+.row { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.clip { margin-bottom: 16px; }
+td { padding: 2px 8px; font-size: 12px; }
+details { margin: 12px 0; }
+summary { padding: 8px 0; color: #aaa; }

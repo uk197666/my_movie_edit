@@ -15,7 +15,8 @@ app.innerHTML = `
   <div class="row">
     <label>サイズの基準
       <select id="sizeSource">
-        <option value="video" selected>映像要素</option>
+        <option value="canvas" selected>canvas経由(向き補正)</option>
+        <option value="video">映像要素</option>
         <option value="frame">フレーム</option>
       </select>
     </label>
@@ -104,7 +105,7 @@ startBtn.addEventListener('click', async () => {
       audio: true,
     });
     await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx, {
-      sizeSource: $<HTMLSelectElement>('#sizeSource').value === 'frame' ? 'frame' : 'video',
+      sizeSource: (['video', 'frame', 'canvas'] as const).find((v) => v === $<HTMLSelectElement>('#sizeSource').value) ?? 'canvas',
       thumb: $<HTMLCanvasElement>('#thumb'),
     });
     resetMarkBadge();

@@ -38,7 +38,7 @@ export type Clip = {
 export type Settings = { preSec: number; postSec: number };
 
 /** エンコーダの映像サイズを何から決めるか: video要素(videoWidth/Height) か、VideoFrame(displayWidth/Height) か */
-export type SizeSource = 'video' | 'frame';
+export type SizeSource = 'video' | 'frame' | 'canvas';
 export type StartOptions = { sizeSource: SizeSource; thumb?: HTMLCanvasElement };
 
 export type Stats = {
@@ -153,6 +153,8 @@ export class Recorder {
   private sizeSource: SizeSource = 'video';
   private thumb?: HTMLCanvasElement;
   private frameLogged = false;
+  private workCanvas?: HTMLCanvasElement;
+  private workCtx?: CanvasRenderingContext2D;
 
   private getSettings: () => Settings;
   private onClip: (clip: Clip) => void;
@@ -279,7 +281,25 @@ export class Recorder {
       return;
     }
     const ts = Math.round(now * 1000);
-    const frame = new VideoFrame(video, { timestamp: ts, duration: 33_333 });
+    const init = { timestamp: ts, duration: 33_333 };
+    // canvas 方式: iOS Safari の VideoFrame(video) は回転前(センサー向き=横)の画素を返すため、
+    // 表示どおりの向きに描画される canvas を経由して、正しい向きの画素から VideoFrame を作る
+    let frame: VideoFrame;
+    if (this.sizeSource === 'canvas') {
+      const w = video.videoWidth & ~1;
+      const h = video.videoHeight & ~1;
+      if (w === 0 || h === 0) return;
+      const cv = (this.workCanvas ??= document.createElement('canvas'));
+      if (cv.width !== w || cv.height !== h) {
+        cv.width = w;
+        cv.height = h;
+      }
+      const ctx = (this.workCtx ??= cv.getContext('2d')!);
+      ctx.drawImage(video, 0, 0, w, h);
+      frame = new VideoFrame(cv, init);
+    } else {
+      frame = new VideoFrame(video, init);
+    }
     if (!this.frameLogged) {
       this.frameLogged = true;
       this.logFrame(frame, video);

@@ -11,6 +11,8 @@ app.innerHTML = `
   <div id="stage">
     <video id="preview" autoplay muted playsinline></video>
     <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
+    <button id="stop" disabled>■ 停止</button>
+    <div id="elapsed"><span class="dot">●</span> <span id="elapsedTime">00:00</span></div>
   </div>
   <div class="row">
     <label>前 <input id="pre" type="number" min="1" max="60" value="10" inputmode="numeric" /> 秒</label>
@@ -18,7 +20,6 @@ app.innerHTML = `
   </div>
   <div class="row">
     <button id="start">録画開始</button>
-    <button id="stop" disabled>停止</button>
   </div>
   <div id="level"><div id="levelBar"></div></div>
   <pre id="stats"></pre>
@@ -41,14 +42,14 @@ app.innerHTML = `
     <h3>2. 撮る</h3>
     <ol>
       <li>画面の「前」「後」の欄で、ハイライトに残す秒数を決めます(初期値は前10秒・後5秒)。</li>
-      <li>「録画開始」を押します。</li>
+      <li>「録画開始」を押します。映像が画面いっぱいに広がり、上に録画時間、右下に★、左上に「停止」が表示されます(ホーム画面から開くと画面全体、Safari で開くとアドレスバーを除いた範囲に広がります)。</li>
       <li>見せ場のプレーのあとに、映像の右下の★ボタンを押します。押した瞬間にボタンが光り、押した回数が表示されます。</li>
       <li>押した時点の「前○秒〜後○秒」だけが、1本のクリップとして残ります。それ以外の映像は保存されず、自動で捨てられます。</li>
       <li>近いタイミングで続けて押した場合、範囲が重なる部分は1本にまとめられます。</li>
     </ol>
     <h3>3. 確認して保存する</h3>
     <ol>
-      <li>撮影が終わったら「停止」を押します。</li>
+      <li>撮影が終わったら、左上の「停止」を押します。元の画面に戻ります。停止は1回触れるだけで止まるので、撮影中は触れないよう気をつけてください。</li>
       <li>「クリップ」の一覧で、再生して確認します。</li>
       <li>クリップには、最初からチェックが付いています。残さないクリップは、チェックを外すか「削除」を押します。</li>
       <li>「選択した○本を保存」を押し、「○本のビデオを保存」を選ぶと、チェックしたクリップがまとめて写真アプリに保存されます。「すべて解除」「すべて選択」でチェックを一度に切り替えられます。</li>
@@ -194,6 +195,16 @@ const recorder = new Recorder(
 );
 
 let statsTimer: number | undefined;
+let recStartAt = 0;
+
+// 録画時間の表示(1時間未満は mm:ss、以上は h:mm:ss)
+const formatElapsed = (ms: number) => {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+};
 
 startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
@@ -209,7 +220,12 @@ startBtn.addEventListener('click', async () => {
     resetMarkBadge();
     stopBtn.disabled = false;
     markBtn.disabled = false;
+    // 録画中は映像を全画面にする(iOS の Fullscreen API では重ねたボタンが出ないため CSS で広げる)
+    recStartAt = performance.now();
+    $('#elapsedTime').textContent = formatElapsed(0);
+    document.body.classList.add('recording');
     statsTimer = window.setInterval(() => {
+      $('#elapsedTime').textContent = formatElapsed(performance.now() - recStartAt);
       const s = recorder.getStats();
       const a = s.audio;
       statsEl.textContent =
@@ -248,6 +264,7 @@ const resetMarkBadge = () => {
 stopBtn.addEventListener('click', async () => {
   stopBtn.disabled = true;
   markBtn.disabled = true;
+  document.body.classList.remove('recording');
   window.clearInterval(statsTimer);
   await recorder.stop();
   statsEl.textContent = '';

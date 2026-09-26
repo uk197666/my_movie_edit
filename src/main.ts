@@ -38,7 +38,7 @@ const clipsEl = $('#clips');
 
 const log = (msg: string) => {
   const t = new Date().toLocaleTimeString();
-  logEl.textContent = `${t} ${msg}\n${logEl.textContent ?? ''}`.slice(0, 2000);
+  logEl.textContent = `${t} ${msg}\n${logEl.textContent ?? ''}`.slice(0, 5000);
 };
 
 const num = (sel: string, fallback: number) => {

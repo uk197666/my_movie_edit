@@ -1,6 +1,9 @@
 // 循環バッファ録画: 映像・音声をエンコード済みチャンクで保持し、ハイライト押下時に前後の区間だけ MP4 にする
 import {
+  ALL_FORMATS,
+  BlobSource,
   BufferTarget,
+  Input,
   EncodedAudioPacketSource,
   EncodedPacket,
   EncodedVideoPacketSource,
@@ -294,6 +297,16 @@ export class Recorder {
 
   private onAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) {
     this.audioChunkCount++;
+    if (this.audioChunkCount === 1) {
+      const head = new Uint8Array(4);
+      chunk.copyTo(head.subarray(0, Math.min(4, chunk.byteLength)));
+      const cfg = meta?.decoderConfig;
+      const desc = cfg?.description ? (cfg.description as ArrayBuffer | ArrayBufferView).byteLength : 0;
+      this.onLog(
+        `AAC先頭チャンク: ${chunk.byteLength}B 先頭=${Array.from(head, (b) => b.toString(16).padStart(2, '0')).join(' ')} ` +
+          `codec=${cfg?.codec} ${cfg?.sampleRate}Hz ${cfg?.numberOfChannels}ch description=${desc}B`,
+      );
+    }
     if (!this.aMeta && meta?.decoderConfig) this.aMeta = meta;
     const a: AChunk = { ts: chunk.timestamp, chunk };
     this.lastAudioTs = a.ts;
@@ -401,6 +414,10 @@ export class Recorder {
     const buffer = output.target.buffer;
     if (!buffer) throw new Error('出力バッファが空です');
     const blob = new Blob([buffer], { type: 'video/mp4' });
+    if (withAudio) {
+      this.checkAudioDecode(p.audio).then((m) => this.onLog(`音声チェック(エンコード結果の復号): ${m}`));
+      this.verifyMp4(blob).then((m) => this.onLog(`音声チェック(MP4の中身): ${m}`));
+    }
     this.onClip({
       id: this.nextClipId++,
       blob,
@@ -411,6 +428,48 @@ export class Recorder {
       height: epoch.height,
       hasAudio: withAudio,
     });
+  }
+
+  // エンコード済み音声を実際に復号して、無音でないか(RMS)を確認する診断
+  private async checkAudioDecode(chunks: AChunk[]): Promise<string> {
+    try {
+      const cfg = this.aMeta!.decoderConfig!;
+      const support = await AudioDecoder.isConfigSupported(cfg);
+      if (!support.supported) return `復号非対応(${cfg.codec})`;
+      let samples = 0;
+      let sum = 0;
+      const dec = new AudioDecoder({
+        output: (d) => {
+          const buf = new Float32Array(d.numberOfFrames);
+          d.copyTo(buf, { planeIndex: 0, format: 'f32-planar' });
+          for (const s of buf) sum += s * s;
+          samples += buf.length;
+          d.close();
+        },
+        error: (e) => this.onLog(`AudioDecoder error: ${e}`),
+      });
+      dec.configure(cfg);
+      for (const c of chunks.slice(0, 40)) dec.decode(c.chunk);
+      await dec.flush();
+      dec.close();
+      return `${samples}サンプル RMS=${samples ? Math.sqrt(sum / samples).toFixed(4) : 'なし'}`;
+    } catch (e) {
+      return `失敗 ${e instanceof Error ? `${e.name}: ${e.message}` : e}`;
+    }
+  }
+
+  // 出来上がった MP4 を読み直して、音声トラックの有無と長さを確認する診断
+  private async verifyMp4(blob: Blob): Promise<string> {
+    try {
+      const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS });
+      const track = await input.getPrimaryAudioTrack();
+      if (!track) return '音声トラックなし';
+      const cfg = await track.getDecoderConfig();
+      const dur = await track.computeDuration();
+      return `音声トラックあり ${dur.toFixed(1)}秒 codec=${cfg?.codec} ${cfg?.sampleRate}Hz ${cfg?.numberOfChannels}ch`;
+    } catch (e) {
+      return `失敗 ${e instanceof Error ? `${e.name}: ${e.message}` : e}`;
+    }
   }
 
   getStats(): Stats {

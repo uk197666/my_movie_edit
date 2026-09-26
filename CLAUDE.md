@@ -26,15 +26,14 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - 前後秒数: 設定画面で変更可(初期値 前10秒・後5秒)。設定は localStorage に保存
 - 保存形式: ハイライトごとに個別の MP4
 - 撮影条件: 1試合〜30分程度、1080p、音声あり
-- 撮影中: ボタン押下は振動(対応時)や画面表示でマークするだけ。確保したクリップのチャンクは一時領域(OPFS/IndexedDB)へ退避し、循環バッファの破棄対象から外す。MP4化と保存は撮影後
+- 撮影中: ボタン押下は画面表示(ボタンが光り、押した回数を表示)でマークする(iPhone は振動不可)。確保したクリップのチャンクはメモリ上で循環バッファの破棄対象から外し、後ろ M 秒が揃ったら MP4 化する。OPFS/IndexedDB へは退避しない(下記「ストレージ・メモリ方針」)
 - 撮影後の一覧画面: クリップの再生プレビュー、不要クリップの削除、選択クリップの一括保存(共有シート)
 - 押下が近接して範囲が重なった場合は1クリップに統合する(詳細は実装時に確定)
 
 ## 撮影バッファ方式
 
-- 案1(推奨候補): WebCodecs の VideoEncoder(対応していれば AudioEncoder)でエンコード済みチャンクを循環バッファに保持し、押下時に前後N秒(キーフレーム境界)を MP4 化する
-- 案2(フォールバック): MediaRecorder を2本、時間をずらして短いセグメントで回し、押下時刻を含むセグメントを結合する
-- どちらにするかは iPhone 実機での spike で決める
+- 決定: WebCodecs の VideoEncoder + AudioEncoder でエンコード済みチャンクをメモリ上の循環バッファに保持し、押下時に前N秒(直前のキーフレームから。最大約1秒長くなる)〜後M秒を MP4 化する
+- 不採用: MediaRecorder を2本ずらして回す方式(案2。実機で案1が動いたため使わない)
 
 ## 実機検証結果(iPhone / iOS 26.6.2 Safari)
 
@@ -96,7 +95,34 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - iOS Safari のバージョンにより WebCodecs / AudioEncoder の対応が異なる → 実機で確認する
 - getUserMedia は HTTPS 必須
 
-## 未決事項
+## 現在の状況
 
-- 映像と音声の同期精度、30分連続録画時の発熱・メモリ(実機で検証中)
+- 公開URL: https://uk197666.github.io/my_movie_edit/ 、リポジトリ: `uk197666/my_movie_edit`。main への push で GitHub Actions が自動デプロイする
+- 実装済み: 循環バッファ録画、ハイライト切り出し(重なりは統合)、縦横の向き対応、音声(AAC)、MP4 化、クリップ一覧(再生/共有/削除)、停止時と開始時の状態リセット、PWA、CSP、使い方セクション、ログの折りたたみ
+- 実機(iPhone)で確認済み: 音声入り保存、縦・横の向き、5分録画で fps 約30
+- 実機で未確認: クリップ追加時にプレビューが縮む問題の修正(`.clip video` の幅制限)、CSP 付きビルド、ホーム画面追加とオフライン起動、使い方セクションの表示
+
+## 開発・検証の手順
+
+- ビルド: `npm run build`(型チェック込み)
+- ローカル検証: `npm run build` → `npx vite preview`(ポート 4173、パスは `/my_movie_edit/`)を、Edge のフェイクカメラで動かす
+  - Playwright はこのプロジェクトに入れず、`C:\Users\uk197\my-git-project\e2e\node_modules` の playwright-core を流用する
+  - 起動フラグ: `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream --autoplay-policy=no-user-gesture-required`
+  - 確認項目: 録画開始 → ★押下 → クリップ生成、`securitypolicyviolation` が 0 件、コンソールエラーなし
+  - 検証後は preview を止め、`dist` を消す
+- コミット末尾に `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` を付ける。push など外部に出す操作は、事前にユーザに確認する
+- 機能や注意点を変えたら、CLAUDE.md と画面の「使い方」を更新する。Service Worker のキャッシュ対象を変えたら `CACHE` のバージョンを上げる
+
+## 決定の経緯(要点)
+
+- Mac がなく Apple Developer Program にも入らないため、ネイティブ(Expo 等)は不採用。Web アプリ(PWA)に決定し、公開は GitHub Pages
+- 映像は `VideoFrame(video)` ではなく canvas 経由で取り込む(iOS の向きの問題。「向きの扱い」参照)
+- ストレージ・メモリは最小限にする。OPFS/IndexedDB は使わない
+- GitHub アカウントの2要素認証は設定しない(リスクは承知。「セキュリティ」参照)
+
+## 未決事項・未着手
+
+- 30分連続録画の実機確認(発熱・メモリ。映像と音声の同期精度もあわせて確認)
+- 前後秒数を localStorage に保存する(仕様にあるが未実装。現在は再読み込みで初期値に戻る)
+- クリップの一括保存(仕様にあるが未実装。現在は1本ずつ共有)
 - 押下が重なった場合の統合ルールの詳細

@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.expo/
+.dart_tool/
+DerivedData/
+Pods/
+*.xcuserstate
+.gradle/
+*.apk
+*.ipa
+
+# Env / secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Vite
+*.local
+dist-ssr/

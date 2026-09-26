@@ -57,6 +57,43 @@ export type Stats = {
   };
 };
 
+const hex = (d: Uint8Array) => Array.from(d, (b) => b.toString(16).padStart(2, '0')).join(' ');
+
+const toBytes = (d: AllowSharedBufferSource) =>
+  ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d);
+
+// MPEG-4 記述子の長さ(可変長: 上位ビットが継続フラグ)を読む
+const readDescLen = (d: Uint8Array, pos: number): [number, number] => {
+  let len = 0;
+  for (let k = 0; k < 4; k++) {
+    const b = d[pos++];
+    len = (len << 7) | (b & 0x7f);
+    if (!(b & 0x80)) break;
+  }
+  return [len, pos];
+};
+
+/**
+ * Safari の AudioEncoder は decoderConfig.description に ES_Descriptor(esds の中身, 39B など)を返す。
+ * MP4 の esds には AudioSpecificConfig(2B 程度)だけを入れる必要があるため、ここから取り出す。
+ * ES_Descriptor でなければ(先頭が 0x03 以外)そのまま返す。
+ */
+const extractAudioSpecificConfig = (desc: Uint8Array): Uint8Array => {
+  if (desc[0] !== 0x03) return desc;
+  let [, pos] = readDescLen(desc, 1); // ES_Descriptor
+  const flags = desc[pos + 2];
+  pos += 3; // ES_ID(2) + flags(1)
+  if (flags & 0x80) pos += 2; // streamDependence
+  if (flags & 0x40) pos += 1 + desc[pos]; // URL
+  if (flags & 0x20) pos += 2; // OCR
+  if (desc[pos] !== 0x04) return desc;
+  [, pos] = readDescLen(desc, pos + 1); // DecoderConfigDescriptor
+  pos += 13; // objectType(1) streamType(1) bufferSize(3) maxBitrate(4) avgBitrate(4)
+  if (desc[pos] !== 0x05) return desc;
+  const [len, start] = readDescLen(desc, pos + 1); // DecoderSpecificInfo = AudioSpecificConfig
+  return desc.slice(start, start + len);
+};
+
 const KEY_INTERVAL_US = 1_000_000;
 const AUDIO_BATCH_SAMPLES = 2048;
 const AUDIO_WAIT_LIMIT_US = 2_000_000;
@@ -81,7 +118,8 @@ export class Recorder {
 
   private venc?: VideoEncoder;
   private aenc?: AudioEncoder;
-  private aMeta?: EncodedAudioChunkMetadata;
+  private aMeta?: EncodedAudioChunkMetadata; // MP4 用(description は AudioSpecificConfig に整形済み)
+  private aMetaRaw?: EncodedAudioChunkMetadata; // エンコーダが返した元の設定(復号チェック用)
   private lastKeyTs = -Infinity;
   private epoch: Epoch = { id: 0, width: 0, height: 0 };
 
@@ -301,13 +339,20 @@ export class Recorder {
       const head = new Uint8Array(4);
       chunk.copyTo(head.subarray(0, Math.min(4, chunk.byteLength)));
       const cfg = meta?.decoderConfig;
-      const desc = cfg?.description ? (cfg.description as ArrayBuffer | ArrayBufferView).byteLength : 0;
+      const desc = cfg?.description ? toBytes(cfg.description) : undefined;
       this.onLog(
-        `AAC先頭チャンク: ${chunk.byteLength}B 先頭=${Array.from(head, (b) => b.toString(16).padStart(2, '0')).join(' ')} ` +
-          `codec=${cfg?.codec} ${cfg?.sampleRate}Hz ${cfg?.numberOfChannels}ch description=${desc}B`,
+        `AAC先頭チャンク: ${chunk.byteLength}B 先頭=${hex(head)} ` +
+          `codec=${cfg?.codec} ${cfg?.sampleRate}Hz ${cfg?.numberOfChannels}ch description=${desc?.byteLength ?? 0}B`,
       );
+      if (desc) this.onLog(`AAC description: ${hex(desc)} → AudioSpecificConfig: ${hex(extractAudioSpecificConfig(desc))}`);
     }
-    if (!this.aMeta && meta?.decoderConfig) this.aMeta = meta;
+    if (!this.aMeta && meta?.decoderConfig) {
+      this.aMetaRaw = meta;
+      const cfg = meta.decoderConfig;
+      this.aMeta = cfg.description
+        ? { decoderConfig: { ...cfg, description: extractAudioSpecificConfig(toBytes(cfg.description)) } }
+        : meta;
+    }
     const a: AChunk = { ts: chunk.timestamp, chunk };
     this.lastAudioTs = a.ts;
     this.aRing.push(a);
@@ -433,7 +478,7 @@ export class Recorder {
   // エンコード済み音声を実際に復号して、無音でないか(RMS)を確認する診断
   private async checkAudioDecode(chunks: AChunk[]): Promise<string> {
     try {
-      const cfg = this.aMeta!.decoderConfig!;
+      const cfg = this.aMetaRaw!.decoderConfig!;
       const support = await AudioDecoder.isConfigSupported(cfg);
       if (!support.supported) return `復号非対応(${cfg.codec})`;
       let samples = 0;

@@ -44,6 +44,15 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - カメラ取得が NotAllowedError で失敗した場合は、iPhone 設定 → アプリ → Safari → カメラ/マイクを「許可」にする
 - 方式は案1(WebCodecs + 循環バッファ)に決定。実装は [src/recorder.ts](src/recorder.ts)、MP4 化は mediabunny
 
+## PWA(ホーム画面追加)
+
+- アプリ名は「ハイライト録画」。iPhone の Safari → 共有 → 「ホーム画面に追加」で、全画面(standalone)のアプリとして起動できる
+- 設定: [public/manifest.webmanifest](public/manifest.webmanifest)、[index.html](index.html) の meta/link、アイコン `public/icons/*.png`
+- アイコンは `node scripts/make-icons.mjs` で再生成できる(依存パッケージなし。赤い円 + 白い縁 + 星)
+- [public/sw.js](public/sw.js): アプリ本体(HTML/JS/アイコン)だけをネットワーク優先でキャッシュし、オフラインでも起動できるようにする。動画・バッファは保存しない(ストレージ方針と矛盾しない)。仕様を変えたら `CACHE` のバージョンを上げる
+- ホーム画面から起動したアプリは、Safari とは別のサイトデータとして扱われ、カメラ/マイクの許可を改めて聞かれることがある
+- ログは既定で閉じた折りたたみセクション。失敗・エラーを含むログが出たときだけ自動で開く
+
 ## ストレージ・メモリ方針(確定)
 
 - ストレージとメモリはできるだけ使わない。ストレージに残すのは、ユーザが写真アプリに保存したクリップだけ

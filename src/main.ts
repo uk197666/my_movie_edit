@@ -3,7 +3,7 @@ import { Recorder, type Clip } from './recorder';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
-  <h1>my_movie_edit spike</h1>
+  <h1>ハイライト録画</h1>
   <div id="stage">
     <video id="preview" autoplay muted playsinline></video>
     <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
@@ -18,9 +18,12 @@ app.innerHTML = `
   </div>
   <div id="level"><div id="levelBar"></div></div>
   <pre id="stats"></pre>
-  <pre id="log"></pre>
   <h2>クリップ</h2>
   <div id="clips"></div>
+  <details id="logSection">
+    <summary>ログ</summary>
+    <pre id="log"></pre>
+  </details>
   <details>
     <summary>対応状況チェック</summary>
     <pre id="ua"></pre>
@@ -36,9 +39,13 @@ const logEl = $('#log');
 const statsEl = $('#stats');
 const clipsEl = $('#clips');
 
+const logSection = $<HTMLDetailsElement>('#logSection');
+
 const log = (msg: string) => {
   const t = new Date().toLocaleTimeString();
   logEl.textContent = `${t} ${msg}\n${logEl.textContent ?? ''}`.slice(0, 5000);
+  // ログは既定で閉じているため、失敗やエラーのときだけ自動で開いて気づけるようにする
+  if (/失敗|error|Error/.test(msg)) logSection.open = true;
 };
 
 const num = (sel: string, fallback: number) => {
@@ -170,3 +177,10 @@ async function checkCapabilities() {
   );
 }
 checkCapabilities();
+
+// ---- PWA: Service Worker(アプリ本体のオフライン起動用) ----
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((e) => log(`Service Worker 登録失敗: ${e}`));
+  });
+}

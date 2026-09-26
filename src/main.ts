@@ -67,7 +67,7 @@ app.innerHTML = `
   <pre id="stats"></pre>
   <h2>クリップ</h2>
   <div class="row" id="bulkBar">
-    <button id="toggleAll" disabled>すべて解除</button>
+    <button id="toggleAll" disabled>すべて選択</button>
     <button id="shareSelected" disabled>選択した0本を保存</button>
   </div>
   <div id="clips"></div>

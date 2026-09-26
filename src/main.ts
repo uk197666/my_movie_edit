@@ -4,7 +4,10 @@ import { Recorder, type Clip } from './recorder';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <h1>my_movie_edit spike</h1>
-  <video id="preview" autoplay muted playsinline></video>
+  <div id="stage">
+    <video id="preview" autoplay muted playsinline></video>
+    <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
+  </div>
   <div class="row">
     <label>前 <input id="pre" type="number" min="1" max="60" value="10" inputmode="numeric" /> 秒</label>
     <label>後 <input id="post" type="number" min="1" max="60" value="5" inputmode="numeric" /> 秒</label>
@@ -13,7 +16,7 @@ app.innerHTML = `
     <button id="start">録画開始</button>
     <button id="stop" disabled>停止</button>
   </div>
-  <button id="mark" disabled>ハイライト</button>
+  <div id="level"><div id="levelBar"></div></div>
   <pre id="stats"></pre>
   <pre id="log"></pre>
   <h2>クリップ</h2>
@@ -47,7 +50,7 @@ const addClip = (clip: Clip) => {
   const div = document.createElement('div');
   div.className = 'clip';
   div.innerHTML = `
-    <div>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB</div>
+    <div>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</div>
     <video src="${clip.url}" controls playsinline preload="metadata"></video>
     <div class="row"><button data-act="share">共有/保存</button><button data-act="del">削除</button></div>
   `;
@@ -78,28 +81,46 @@ let statsTimer: number | undefined;
 
 startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
+  // iOS は AudioContext の resume がタップ操作の中でないと効かないため、getUserMedia より前に行う
+  const audioCtx = new AudioContext();
+  void audioCtx.resume();
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       audio: true,
     });
-    await recorder.start(stream, $<HTMLVideoElement>('#preview'));
+    await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx);
     stopBtn.disabled = false;
     markBtn.disabled = false;
     statsTimer = window.setInterval(() => {
       const s = recorder.getStats();
+      const a = s.audio;
       statsEl.textContent =
-        `バッファ ${s.bufferedSec.toFixed(1)}秒 / ${s.bufferedMB.toFixed(1)}MB\n` +
-        `fps ${s.fps.toFixed(1)} / 破棄 ${s.dropped} / キュー ${s.encodeQueue}\n` +
-        `処理待ちハイライト ${s.pending} / 音声 ${s.hasAudio ? 'あり' : 'なし'}`;
+        `映像 ${s.width}x${s.height}(${s.height > s.width ? '縦' : '横'}) fps ${s.fps.toFixed(1)} / 破棄 ${s.dropped} / キュー ${s.encodeQueue}\n` +
+        `バッファ ${s.bufferedSec.toFixed(1)}秒 / ${s.bufferedMB.toFixed(1)}MB / 処理待ち ${s.pending}\n` +
+        `音声 ${a.enabled ? 'ON' : 'OFF'} ctx=${a.ctxState} ${a.sampleRate}Hz PCM=${a.pcmCount} チャンク=${a.chunkCount} config=${a.hasConfig ? 'あり' : 'なし'}`;
+      $('#levelBar').style.width = `${Math.min(100, Math.round(a.level * 300))}%`;
     }, 500);
   } catch (e) {
     log(`開始失敗: ${e instanceof Error ? `${e.name}: ${e.message}` : e}`);
+    void audioCtx.close();
     startBtn.disabled = false;
   }
 });
 
-markBtn.addEventListener('click', () => log(recorder.highlight()));
+let markCount = 0;
+markBtn.addEventListener('click', () => {
+  const msg = recorder.highlight();
+  log(msg);
+  if (msg.startsWith('録画中ではありません')) return;
+  markCount++;
+  const badge = $('#badge');
+  badge.hidden = false;
+  badge.textContent = String(markCount);
+  markBtn.classList.remove('flash');
+  void markBtn.offsetWidth; // アニメーションを再起動
+  markBtn.classList.add('flash');
+});
 
 stopBtn.addEventListener('click', async () => {
   stopBtn.disabled = true;

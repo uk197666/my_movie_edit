@@ -8,7 +8,10 @@ import {
   Output,
 } from 'mediabunny';
 
-type VChunk = { ts: number; key: boolean; chunk: EncodedVideoChunk };
+// 向き(映像サイズ)が変わるたびにエンコーダを作り直す。1つの世代(epoch)は1つの映像サイズ・1つの decoderConfig を持つ
+type Epoch = { id: number; width: number; height: number; meta?: EncodedVideoChunkMetadata };
+
+type VChunk = { ts: number; key: boolean; chunk: EncodedVideoChunk; epoch: Epoch };
 type AChunk = { ts: number; chunk: EncodedAudioChunk };
 
 type Pending = {
@@ -24,6 +27,9 @@ export type Clip = {
   url: string;
   durationSec: number;
   markedAtSec: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
 };
 
 export type Settings = { preSec: number; postSec: number };
@@ -35,11 +41,22 @@ export type Stats = {
   dropped: number;
   encodeQueue: number;
   pending: number;
-  hasAudio: boolean;
+  width: number;
+  height: number;
+  audio: {
+    enabled: boolean;
+    ctxState: string;
+    sampleRate: number;
+    pcmCount: number;
+    chunkCount: number;
+    hasConfig: boolean;
+    level: number;
+  };
 };
 
 const KEY_INTERVAL_US = 1_000_000;
 const AUDIO_BATCH_SAMPLES = 2048;
+const AUDIO_WAIT_LIMIT_US = 2_000_000;
 
 const WORKLET_CODE = `
 class Cap extends AudioWorkletProcessor {
@@ -61,9 +78,9 @@ export class Recorder {
 
   private venc?: VideoEncoder;
   private aenc?: AudioEncoder;
-  private vMeta?: EncodedVideoChunkMetadata;
   private aMeta?: EncodedAudioChunkMetadata;
   private lastKeyTs = -Infinity;
+  private epoch: Epoch = { id: 0, width: 0, height: 0 };
 
   private vRing: VChunk[] = [];
   private aRing: AChunk[] = [];
@@ -77,6 +94,9 @@ export class Recorder {
   private audioSamplesSent = 0;
   private audioBuf: Float32Array[] = [];
   private audioBufLen = 0;
+  private pcmCount = 0;
+  private audioChunkCount = 0;
+  private level = 0;
 
   private frameCount = 0;
   private fps = 0;
@@ -96,32 +116,18 @@ export class Recorder {
     this.onLog = onLog;
   }
 
-  async start(stream: MediaStream, video: HTMLVideoElement): Promise<void> {
+  /** audioCtx はタップ操作の中で作成・resume 済みのものを渡す(iOS は操作外だと suspended のままになるため) */
+  async start(stream: MediaStream, video: HTMLVideoElement, audioCtx: AudioContext): Promise<void> {
     this.stream = stream;
     video.srcObject = stream;
     await video.play();
-    const width = video.videoWidth & ~1;
-    const height = video.videoHeight & ~1;
-
-    this.venc = new VideoEncoder({
-      output: (chunk, meta) => this.onVideoChunk(chunk, meta),
-      error: (e) => this.onLog(`VideoEncoder error: ${e}`),
-    });
-    this.venc.configure({
-      codec: 'avc1.640028',
-      width,
-      height,
-      bitrate: 8_000_000,
-      framerate: 30,
-      latencyMode: 'realtime',
-      avc: { format: 'avc' },
-    });
+    this.configureVideo(video.videoWidth & ~1, video.videoHeight & ~1);
 
     try {
-      await this.startAudio(stream);
+      await this.startAudio(stream, audioCtx);
     } catch (e) {
       this.hasAudio = false;
-      this.onLog(`音声なしで続行: ${e}`);
+      this.onLog(`音声なしで続行: ${e instanceof Error ? `${e.name}: ${e.message}` : e}`);
     }
 
     try {
@@ -139,10 +145,49 @@ export class Recorder {
       video.requestVideoFrameCallback(loop);
     };
     video.requestVideoFrameCallback(loop);
-    this.onLog(`録画開始 ${width}x${height}`);
+    this.onLog(`録画開始 ${this.epoch.width}x${this.epoch.height}`);
+  }
+
+  // 映像サイズに合わせてエンコーダを(再)作成する
+  private configureVideo(width: number, height: number) {
+    const epoch: Epoch = { id: this.epoch.id + 1, width, height };
+    this.epoch = epoch;
+    this.venc?.close();
+    const venc = new VideoEncoder({
+      output: (chunk, meta) => this.onVideoChunk(epoch, chunk, meta),
+      error: (e) => this.onLog(`VideoEncoder error: ${e}`),
+    });
+    venc.configure({
+      codec: 'avc1.640028',
+      width,
+      height,
+      bitrate: 8_000_000,
+      framerate: 30,
+      latencyMode: 'realtime',
+      avc: { format: 'avc' },
+    });
+    this.venc = venc;
+    this.lastKeyTs = -Infinity;
+  }
+
+  // 向きが変わったら、待機中のハイライトをそこまでで確定し、バッファを捨てて新しい向きで撮り直す
+  private onOrientationChange(width: number, height: number) {
+    this.onLog(`向き変更 ${this.epoch.width}x${this.epoch.height} → ${width}x${height}`);
+    for (const p of this.pending.splice(0)) {
+      p.endTs = Math.min(p.endTs, this.lastVideoTs);
+      this.mux(p).catch((e) => this.onLog(`MP4化失敗: ${e}`));
+    }
+    this.vRing = [];
+    this.lastVideoTs = -1;
+    this.configureVideo(width, height);
   }
 
   private captureFrame(video: HTMLVideoElement, now: number) {
+    const width = video.videoWidth & ~1;
+    const height = video.videoHeight & ~1;
+    if (width > 0 && height > 0 && (width !== this.epoch.width || height !== this.epoch.height)) {
+      this.onOrientationChange(width, height);
+    }
     const venc = this.venc!;
     if (venc.encodeQueueSize > 6) {
       this.dropped++;
@@ -163,10 +208,13 @@ export class Recorder {
     }
   }
 
-  private async startAudio(stream: MediaStream) {
+  private async startAudio(stream: MediaStream, ctx: AudioContext) {
     if (stream.getAudioTracks().length === 0) throw new Error('音声トラックなし');
-    const ctx = new AudioContext();
-    await ctx.resume();
+    this.audioCtx = ctx;
+    ctx.onstatechange = () => this.onLog(`AudioContext: ${ctx.state}`);
+    if (ctx.state !== 'running') await ctx.resume();
+    if (ctx.state !== 'running') this.onLog(`AudioContext が running になりません(${ctx.state})`);
+
     const url = URL.createObjectURL(new Blob([WORKLET_CODE], { type: 'text/javascript' }));
     await ctx.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
@@ -175,7 +223,13 @@ export class Recorder {
       output: (chunk, meta) => this.onAudioChunk(chunk, meta),
       error: (e) => this.onLog(`AudioEncoder error: ${e}`),
     });
-    aenc.configure({ codec: 'mp4a.40.2', sampleRate: ctx.sampleRate, numberOfChannels: 1, bitrate: 128_000 });
+    aenc.configure({
+      codec: 'mp4a.40.2',
+      sampleRate: ctx.sampleRate,
+      numberOfChannels: 1,
+      bitrate: 128_000,
+      aac: { format: 'aac' },
+    });
 
     const source = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, 'cap');
@@ -186,13 +240,17 @@ export class Recorder {
     mute.connect(ctx.destination);
     node.port.onmessage = (e: MessageEvent<Float32Array>) => this.onPcm(e.data);
 
-    this.audioCtx = ctx;
     this.aenc = aenc;
     this.hasAudio = true;
   }
 
   private onPcm(samples: Float32Array) {
     const ctx = this.audioCtx!;
+    this.pcmCount++;
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    this.level = Math.max(this.level, Math.sqrt(sum / samples.length));
+
     if (this.audioTs0 < 0) {
       this.audioTs0 = performance.now() * 1000 - (samples.length / ctx.sampleRate) * 1e6;
     }
@@ -223,9 +281,10 @@ export class Recorder {
     audioData.close();
   }
 
-  private onVideoChunk(chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata) {
-    if (!this.vMeta && meta?.decoderConfig) this.vMeta = meta;
-    const v: VChunk = { ts: chunk.timestamp, key: chunk.type === 'key', chunk };
+  private onVideoChunk(epoch: Epoch, chunk: EncodedVideoChunk, meta?: EncodedVideoChunkMetadata) {
+    if (epoch !== this.epoch) return; // 向き変更前のエンコーダから遅れて届いたチャンクは捨てる
+    if (!epoch.meta && meta?.decoderConfig) epoch.meta = meta;
+    const v: VChunk = { ts: chunk.timestamp, key: chunk.type === 'key', chunk, epoch };
     this.lastVideoTs = v.ts;
     this.vRing.push(v);
     for (const p of this.pending) p.video.push(v);
@@ -234,6 +293,7 @@ export class Recorder {
   }
 
   private onAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) {
+    this.audioChunkCount++;
     if (!this.aMeta && meta?.decoderConfig) this.aMeta = meta;
     const a: AChunk = { ts: chunk.timestamp, chunk };
     this.lastAudioTs = a.ts;
@@ -261,7 +321,7 @@ export class Recorder {
 
   /** ハイライトを記録する。戻り値は結果メッセージ */
   highlight(): string {
-    if (!this.running || this.lastVideoTs < 0) return '録画中ではありません';
+    if (!this.running || this.lastVideoTs < 0 || this.vRing.length === 0) return '録画中ではありません';
     const { preSec, postSec } = this.getSettings();
     const T = this.lastVideoTs;
     const startTs = T - preSec * 1e6;
@@ -289,7 +349,9 @@ export class Recorder {
 
   private finalizeReady() {
     const ready = this.pending.filter(
-      (p) => this.lastVideoTs >= p.endTs && (!this.hasAudio || this.lastAudioTs >= p.endTs),
+      (p) =>
+        this.lastVideoTs >= p.endTs &&
+        (!this.hasAudio || this.lastAudioTs >= p.endTs || this.lastVideoTs >= p.endTs + AUDIO_WAIT_LIMIT_US),
     );
     for (const p of ready) {
       this.pending.splice(this.pending.indexOf(p), 1);
@@ -298,21 +360,31 @@ export class Recorder {
   }
 
   private async mux(p: Pending) {
-    const base = p.video[0].ts;
+    const first = p.video[0];
+    const base = first.ts;
+    const epoch = first.epoch;
     const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
     const vs = new EncodedVideoPacketSource('avc');
     output.addVideoTrack(vs);
-    const withAudio = this.hasAudio && !!this.aMeta && p.audio.length > 0;
+
+    let audioReason = '';
+    if (!this.hasAudio) audioReason = '音声機能が無効';
+    else if (!this.aMeta) audioReason = 'AACのdecoderConfigが取得できていない';
+    else if (p.audio.length === 0) audioReason = '音声チャンクが0件';
+    const withAudio = audioReason === '';
     const as = withAudio ? new EncodedAudioPacketSource('aac') : undefined;
     if (as) output.addAudioTrack(as);
+    if (!withAudio) this.onLog(`このクリップは音声なし: ${audioReason}`);
     await output.start();
 
+    // p.video は向き変更前のチャンクを含まない(向き変更時にバッファを捨てているため)ので、先頭の世代のものだけ使う
+    const videos = p.video.filter((v) => v.epoch === epoch);
     const toPacket = (c: EncodedVideoChunk | EncodedAudioChunk) =>
       EncodedPacket.fromEncodedChunk(c).clone({ timestamp: (c.timestamp - base) / 1e6 });
 
     const videoJob = (async () => {
-      for (let i = 0; i < p.video.length; i++) {
-        await vs.add(toPacket(p.video[i].chunk), i === 0 ? this.vMeta : undefined);
+      for (let i = 0; i < videos.length; i++) {
+        await vs.add(toPacket(videos[i].chunk), i === 0 ? epoch.meta : undefined);
       }
       vs.close();
     })();
@@ -333,8 +405,11 @@ export class Recorder {
       id: this.nextClipId++,
       blob,
       url: URL.createObjectURL(blob),
-      durationSec: (p.endTs - base) / 1e6,
+      durationSec: (Math.min(p.endTs, videos[videos.length - 1].ts) - base) / 1e6,
       markedAtSec: (p.markedAt - this.startedAtMs * 1000) / 1e6,
+      width: epoch.width,
+      height: epoch.height,
+      hasAudio: withAudio,
     });
   }
 
@@ -344,6 +419,8 @@ export class Recorder {
     let bytes = 0;
     for (const v of this.vRing) bytes += v.chunk.byteLength;
     for (const a of this.aRing) bytes += a.chunk.byteLength;
+    const level = this.level;
+    this.level = 0;
     return {
       bufferedSec: (last - first) / 1e6,
       bufferedMB: bytes / 1e6,
@@ -351,7 +428,17 @@ export class Recorder {
       dropped: this.dropped,
       encodeQueue: this.venc?.encodeQueueSize ?? 0,
       pending: this.pending.length,
-      hasAudio: this.hasAudio,
+      width: this.epoch.width,
+      height: this.epoch.height,
+      audio: {
+        enabled: this.hasAudio,
+        ctxState: this.audioCtx?.state ?? 'なし',
+        sampleRate: this.audioCtx?.sampleRate ?? 0,
+        pcmCount: this.pcmCount,
+        chunkCount: this.audioChunkCount,
+        hasConfig: !!this.aMeta,
+        level,
+      },
     };
   }
 

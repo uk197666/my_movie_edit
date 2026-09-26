@@ -23,6 +23,10 @@ app.innerHTML = `
   <div id="level"><div id="levelBar"></div></div>
   <pre id="stats"></pre>
   <h2>クリップ</h2>
+  <div class="row" id="bulkBar">
+    <button id="toggleAll" disabled>すべて解除</button>
+    <button id="shareSelected" disabled>選択した0本を保存</button>
+  </div>
   <div id="clips"></div>
   <details id="usageSection" class="usage">
     <summary>使い方</summary>
@@ -46,8 +50,10 @@ app.innerHTML = `
     <ol>
       <li>撮影が終わったら「停止」を押します。</li>
       <li>「クリップ」の一覧で、再生して確認します。</li>
-      <li>残したいクリップは「共有/保存」を押し、「ビデオを保存」を選ぶと、写真アプリに保存されます。</li>
-      <li>いらないクリップは「削除」を押します。</li>
+      <li>クリップには、最初からチェックが付いています。残さないクリップは、チェックを外すか「削除」を押します。</li>
+      <li>「選択した○本を保存」を押し、「○本のビデオを保存」を選ぶと、チェックしたクリップがまとめて写真アプリに保存されます。「すべて解除」「すべて選択」でチェックを一度に切り替えられます。</li>
+      <li>1本だけ保存したいときは、そのクリップの「共有/保存」を押し、「ビデオを保存」を選びます。</li>
+      <li>保存したあとも、クリップは一覧に残ります。いらなくなったら「削除」を押してください。</li>
       <li class="warn">保存する前に、ページを閉じたり再読み込みしたりすると、クリップは消えます。停止したら、早めに保存してください。</li>
     </ol>
     <h3>4. 知っておくとよいこと</h3>
@@ -97,11 +103,59 @@ const num = (sel: string, fallback: number) => {
   return Number.isFinite(v) && v >= 1 ? v : fallback;
 };
 
+const toggleAllBtn = $<HTMLButtonElement>('#toggleAll');
+const shareSelectedBtn = $<HTMLButtonElement>('#shareSelected');
+
+// 一覧にあるクリップ(削除したものは外す)。一括保存の対象はチェックの付いたもの
+const clipItems = new Map<number, { clip: Clip; check: HTMLInputElement }>();
+let bulkSharing = false;
+
+const toFile = (clip: Clip) => new File([clip.blob], `highlight-${clip.id}.mp4`, { type: 'video/mp4' });
+
+const selectedClips = () =>
+  [...clipItems.values()].filter((it) => it.check.checked).map((it) => it.clip).sort((a, b) => a.id - b.id);
+
+const updateBulkBar = () => {
+  const n = selectedClips().length;
+  const allChecked = clipItems.size > 0 && n === clipItems.size;
+  shareSelectedBtn.textContent = `選択した${n}本を保存`;
+  shareSelectedBtn.disabled = n === 0 || bulkSharing;
+  toggleAllBtn.textContent = allChecked ? 'すべて解除' : 'すべて選択';
+  toggleAllBtn.disabled = clipItems.size === 0;
+};
+
+toggleAllBtn.addEventListener('click', () => {
+  const check = selectedClips().length !== clipItems.size;
+  for (const it of clipItems.values()) it.check.checked = check;
+  updateBulkBar();
+});
+
+shareSelectedBtn.addEventListener('click', async () => {
+  const files = selectedClips().map(toFile);
+  if (files.length === 0) return;
+  bulkSharing = true;
+  updateBulkBar();
+  try {
+    if (navigator.canShare?.({ files })) {
+      await navigator.share({ files });
+      log(`${files.length}本を共有シートに渡しました`);
+    } else {
+      log('共有失敗: この環境ではまとめて共有できません。1本ずつ共有してください');
+    }
+  } catch (e) {
+    // キャンセル(AbortError)は失敗扱いにしない
+    log(e instanceof Error && e.name === 'AbortError' ? '共有をキャンセルしました' : `共有失敗: ${e}`);
+  } finally {
+    bulkSharing = false;
+    updateBulkBar();
+  }
+});
+
 const addClip = (clip: Clip) => {
   const div = document.createElement('div');
   div.className = 'clip';
   div.innerHTML = `
-    <div>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</div>
+    <label class="pick"><input type="checkbox" checked /><span>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</span></label>
     <div class="playerDim"></div>
     <video src="${clip.url}" controls playsinline preload="metadata"></video>
     <div class="row"><button data-act="share">共有/保存</button><button data-act="del">削除</button></div>
@@ -111,7 +165,7 @@ const addClip = (clip: Clip) => {
     div.querySelector('.playerDim')!.textContent = `プレーヤーが認識したサイズ ${player.videoWidth}x${player.videoHeight}`;
   });
   div.querySelector('[data-act="share"]')!.addEventListener('click', async () => {
-    const file = new File([clip.blob], `highlight-${clip.id}.mp4`, { type: 'video/mp4' });
+    const file = toFile(clip);
     try {
       if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] });
       else log('この環境ではファイル共有できません');
@@ -122,7 +176,13 @@ const addClip = (clip: Clip) => {
   div.querySelector('[data-act="del"]')!.addEventListener('click', () => {
     URL.revokeObjectURL(clip.url);
     div.remove();
+    clipItems.delete(clip.id);
+    updateBulkBar();
   });
+  const check = div.querySelector<HTMLInputElement>('.pick input')!;
+  check.addEventListener('change', updateBulkBar);
+  clipItems.set(clip.id, { clip, check });
+  updateBulkBar();
   clipsEl.prepend(div);
   log(`クリップ #${clip.id} 完成(${clip.durationSec.toFixed(1)}秒)`);
 };

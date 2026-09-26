@@ -1,5 +1,5 @@
 // PWA アイコン(PNG)を生成するスクリプト。依存パッケージなし: `node scripts/make-icons.mjs`
-// デザイン: 暗い背景に、ハイライトボタンと同じ「白い縁の赤い円 + 白い星」
+// デザイン: 暗い背景に、バスケットボール(オレンジの球 + 黒い縫い目)
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,8 +9,8 @@ const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'ic
 mkdirSync(outDir, { recursive: true });
 
 const BG = [17, 17, 17];
-const RED = [229, 72, 77];
-const WHITE = [255, 255, 255];
+const ORANGE = [240, 128, 40];
+const SEAM = [30, 20, 15];
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -49,31 +49,18 @@ const encodePng = (size, rgb) => {
   ]);
 };
 
-const starPoints = (cx, cy, ro) => {
-  const ri = ro * 0.382;
-  return Array.from({ length: 10 }, (_, i) => {
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    const r = i % 2 === 0 ? ro : ri;
-    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-  });
-};
-const inPolygon = (x, y, pts) => {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const [xi, yi] = pts[i];
-    const [xj, yj] = pts[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-};
-
-// scale: 円全体(縁を含む)が画像の何割の半径か。maskable は端が切れても欠けないよう小さめにする
+// scale: ボールの半径が画像サイズの何割か。maskable は端が切れても欠けないよう小さめにする
 const render = (size, scale) => {
   const cx = size / 2;
   const cy = size / 2;
-  const outer = size * scale; // 白い縁の外側の半径
-  const inner = outer * 0.88; // 赤い円の半径
-  const star = starPoints(cx, cy + inner * 0.03, inner * 0.62);
+  const R = size * scale; // ボールの半径
+  const hw = R * 0.05; // 縫い目の太さ(半分)
+  // 縫い目: 縦線・横線、左右に膨らむ2本の弧(中心が ±1.3R、半径 0.9R の円の一部)
+  const isSeam = (px, py) =>
+    Math.abs(px - cx) <= hw ||
+    Math.abs(py - cy) <= hw ||
+    Math.abs(Math.hypot(px - (cx - 1.3 * R), py - cy) - 0.9 * R) <= hw ||
+    Math.abs(Math.hypot(px - (cx + 1.3 * R), py - cy) - 0.9 * R) <= hw;
   const rgb = Buffer.alloc(size * size * 3);
   const SS = 4; // 4x4 スーパーサンプリングで縁を滑らかにする
   for (let y = 0; y < size; y++) {
@@ -85,8 +72,15 @@ const render = (size, scale) => {
           const py = y + (sy + 0.5) / SS;
           const d = Math.hypot(px - cx, py - cy);
           let c = BG;
-          if (d <= outer) c = WHITE;
-          if (d <= inner) c = inPolygon(px, py, star) ? WHITE : RED;
+          if (d <= R) {
+            if (d >= R - hw || isSeam(px, py)) {
+              c = SEAM;
+            } else {
+              // 左上を少し明るくして立体感を出す
+              const light = 1 + (0.14 * ((cx - px) + (cy - py))) / (2 * R);
+              c = ORANGE.map((v) => Math.min(255, v * light));
+            }
+          }
           acc[0] += c[0];
           acc[1] += c[1];
           acc[2] += c[2];
@@ -102,9 +96,9 @@ const render = (size, scale) => {
 };
 
 const targets = [
-  ['apple-touch-icon.png', 180, 0.38],
-  ['icon-192.png', 192, 0.38],
-  ['icon-512.png', 512, 0.38],
+  ['apple-touch-icon.png', 180, 0.4],
+  ['icon-192.png', 192, 0.4],
+  ['icon-512.png', 512, 0.4],
   ['icon-maskable-512.png', 512, 0.3],
 ];
 for (const [name, size, scale] of targets) {

@@ -16,7 +16,9 @@
       /* クリップの映像は元サイズのまま表示すると横にはみ出し、iOS Safari がページ全体を縮小表示してしまう */
       .clip video { display: block; width: 100%; max-height: 60vh; object-fit: contain; background: #000; border-radius: 8px; }
       body { margin: 0; padding: 0 16px calc(32px + env(safe-area-inset-bottom)); font-family: system-ui, sans-serif; background: #111; color: #eee; }
-      h1 { font-size: 18px; }
+      h1 { font-size: 18px; margin: 0; }
+      .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 16px 0 8px; }
+      .note { font-size: 12px; color: #ffb454; }
       #stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
       #preview { display: block; width: 100%; max-height: 70vh; object-fit: contain; }
       button { font-size: 16px; padding: 12px 16px; border-radius: 8px; border: 0; background: #2a6df4; color: #fff; touch-action: manipulation; }

@@ -3,7 +3,10 @@ import { Recorder, type Clip } from './recorder';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
-  <h1>ハイライト録画</h1>
+  <header class="head">
+    <h1>ハイライト録画</h1>
+    <span class="note">※撮影前に、画面の回転ロックをオフにしてください</span>
+  </header>
   <div id="stage">
     <video id="preview" autoplay muted playsinline></video>
     <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>

@@ -36,6 +36,14 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 - 案2(フォールバック): MediaRecorder を2本、時間をずらして短いセグメントで回し、押下時刻を含むセグメントを結合する
 - どちらにするかは iPhone 実機での spike で決める
 
+## 実機検証結果(iPhone / iOS 26.6.2 Safari)
+
+- OK: getUserMedia、VideoEncoder(H.264 1080p)、AudioEncoder(AAC)、MediaRecorder、Screen Wake Lock、OPFS、Web Share(ファイル)
+- NG: MediaStreamTrackProcessor(映像フレームの取り出しは `requestVideoFrameCallback` + `new VideoFrame(video)` で代替、音声は AudioWorklet で代替)
+- NG: vibrate(振動フィードバックは使えない。画面表示で代替)
+- カメラ取得が NotAllowedError で失敗した場合は、iPhone 設定 → アプリ → Safari → カメラ/マイクを「許可」にする
+- 方式は案1(WebCodecs + 循環バッファ)に決定。実装は [src/recorder.ts](src/recorder.ts)、MP4 化は mediabunny
+
 ## 既知の制約
 
 - 画面ロックやアプリ切替でカメラ・撮影が止まる → 撮影中は Screen Wake Lock API で画面スリープを防ぐ
@@ -45,5 +53,5 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
 
 ## 未決事項
 
-- 撮影バッファ方式(WebCodecs か MediaRecorder か)
+- 映像と音声の同期精度、30分連続録画時の発熱・メモリ(実機で検証中)
 - 押下が重なった場合の統合ルールの詳細

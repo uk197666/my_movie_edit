@@ -157,14 +157,9 @@ const addClip = (clip: Clip) => {
   div.className = 'clip';
   div.innerHTML = `
     <label class="pick"><input type="checkbox" checked /><span>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</span></label>
-    <div class="playerDim"></div>
     <video src="${clip.url}" controls playsinline preload="metadata"></video>
     <div class="row"><button data-act="share">共有/保存</button><button data-act="del">削除</button></div>
   `;
-  const player = div.querySelector('video')!;
-  player.addEventListener('loadedmetadata', () => {
-    div.querySelector('.playerDim')!.textContent = `プレーヤーが認識したサイズ ${player.videoWidth}x${player.videoHeight}`;
-  });
   div.querySelector('[data-act="share"]')!.addEventListener('click', async () => {
     const file = toFile(clip);
     try {

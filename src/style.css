@@ -21,8 +21,8 @@ button:disabled { background: #444; color: #888; }
   position: absolute; top: -6px; right: -6px; min-width: 22px; height: 22px; padding: 0 4px; box-sizing: border-box;
   border-radius: 11px; background: #fff; color: #e5484d; font-size: 13px; font-weight: bold; line-height: 22px;
 }
-/* 停止と録画時間は録画中(全画面)だけ表示する */
-body:not(.recording) :is(#stop, #elapsed) { display: none; }
+/* 映像枠(★・停止・録画時間を含む)は録画中(全画面)だけ表示する。録画前・停止後は映すものがない */
+body:not(.recording) #stage { display: none; }
 #stop {
   position: absolute; top: calc(12px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left));
   padding: 10px 14px; background: rgba(0, 0, 0, 0.55); border: 2px solid #fff;

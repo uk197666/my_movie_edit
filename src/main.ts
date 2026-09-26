@@ -8,27 +8,6 @@ app.innerHTML = `
     <h1>ハイライト録画</h1>
     <span class="note">※撮影前に、画面の回転ロックをオフにしてください</span>
   </header>
-  <div id="stage">
-    <video id="preview" autoplay muted playsinline></video>
-    <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
-    <button id="stop" disabled>■ 停止</button>
-    <div id="elapsed"><span class="dot">●</span> <span id="elapsedTime">00:00</span></div>
-  </div>
-  <div class="row">
-    <label>前 <input id="pre" type="number" min="1" max="60" value="10" inputmode="numeric" /> 秒</label>
-    <label>後 <input id="post" type="number" min="1" max="60" value="5" inputmode="numeric" /> 秒</label>
-  </div>
-  <div class="row">
-    <button id="start">録画開始</button>
-  </div>
-  <div id="level"><div id="levelBar"></div></div>
-  <pre id="stats"></pre>
-  <h2>クリップ</h2>
-  <div class="row" id="bulkBar">
-    <button id="toggleAll" disabled>すべて解除</button>
-    <button id="shareSelected" disabled>選択した0本を保存</button>
-  </div>
-  <div id="clips"></div>
   <details id="usageSection" class="usage">
     <summary>使い方</summary>
     <h3>1. 撮影の前に</h3>
@@ -71,6 +50,27 @@ app.innerHTML = `
       <li>上記でも直らない場合は、下の「ログ」を開いて、内容を確認してください。</li>
     </ul>
   </details>
+  <div id="stage">
+    <video id="preview" autoplay muted playsinline></video>
+    <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
+    <button id="stop" disabled>■ 停止</button>
+    <div id="elapsed"><span class="dot">●</span> <span id="elapsedTime">00:00</span></div>
+  </div>
+  <div class="row">
+    <label>前 <input id="pre" type="number" min="1" max="60" value="10" inputmode="numeric" /> 秒</label>
+    <label>後 <input id="post" type="number" min="1" max="60" value="5" inputmode="numeric" /> 秒</label>
+  </div>
+  <div class="row">
+    <button id="start">録画開始</button>
+  </div>
+  <div id="level"><div id="levelBar"></div></div>
+  <pre id="stats"></pre>
+  <h2>クリップ</h2>
+  <div class="row" id="bulkBar">
+    <button id="toggleAll" disabled>すべて解除</button>
+    <button id="shareSelected" disabled>選択した0本を保存</button>
+  </div>
+  <div id="clips"></div>
   <details id="logSection">
     <summary>ログ</summary>
     <pre id="log"></pre>
@@ -267,6 +267,8 @@ stopBtn.addEventListener('click', async () => {
   document.body.classList.remove('recording');
   window.clearInterval(statsTimer);
   await recorder.stop();
+  // 止めたカメラのストリームを video 要素に持たせたままにしない
+  $<HTMLVideoElement>('#preview').srcObject = null;
   statsEl.textContent = '';
   $('#levelBar').style.width = '0';
   resetMarkBadge();

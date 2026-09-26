@@ -90,6 +90,7 @@ startBtn.addEventListener('click', async () => {
       audio: true,
     });
     await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx);
+    resetMarkBadge();
     stopBtn.disabled = false;
     markBtn.disabled = false;
     statsTimer = window.setInterval(() => {
@@ -122,11 +123,20 @@ markBtn.addEventListener('click', () => {
   markBtn.classList.add('flash');
 });
 
+const resetMarkBadge = () => {
+  markCount = 0;
+  $('#badge').hidden = true;
+  $('#badge').textContent = '0';
+};
+
 stopBtn.addEventListener('click', async () => {
   stopBtn.disabled = true;
   markBtn.disabled = true;
   window.clearInterval(statsTimer);
   await recorder.stop();
+  statsEl.textContent = '';
+  $('#levelBar').style.width = '0';
+  resetMarkBadge();
   startBtn.disabled = false;
 });
 

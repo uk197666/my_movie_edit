@@ -159,6 +159,7 @@ export class Recorder {
 
   /** audioCtx はタップ操作の中で作成・resume 済みのものを渡す(iOS は操作外だと suspended のままになるため) */
   async start(stream: MediaStream, video: HTMLVideoElement, audioCtx: AudioContext): Promise<void> {
+    this.resetState();
     this.stream = stream;
     video.srcObject = stream;
     await video.play();
@@ -187,6 +188,34 @@ export class Recorder {
     };
     video.requestVideoFrameCallback(loop);
     this.onLog(`録画開始 ${this.epoch.width}x${this.epoch.height}`);
+  }
+
+  // 停止・再開始をまたいで前回の状態(バッファ、音声のタイムスタンプ、AAC設定など)を持ち越さないよう初期化する
+  private resetState() {
+    this.venc = undefined;
+    this.aenc = undefined;
+    this.audioCtx = undefined;
+    this.stream = undefined;
+    this.wakeLock = undefined;
+    this.aMeta = undefined;
+    this.aMetaRaw = undefined;
+    this.lastKeyTs = -Infinity;
+    this.vRing = [];
+    this.aRing = [];
+    this.pending = [];
+    this.lastVideoTs = -1;
+    this.lastAudioTs = -1;
+    this.hasAudio = false;
+    this.audioTs0 = -1;
+    this.audioSamplesSent = 0;
+    this.audioBuf = [];
+    this.audioBufLen = 0;
+    this.pcmCount = 0;
+    this.audioChunkCount = 0;
+    this.level = 0;
+    this.frameCount = 0;
+    this.fps = 0;
+    this.dropped = 0;
   }
 
   // 映像サイズに合わせてエンコーダを(再)作成する
@@ -425,9 +454,12 @@ export class Recorder {
     const vs = new EncodedVideoPacketSource('avc');
     output.addVideoTrack(vs);
 
+    // 状態リセット(停止・再開始)が await 中に走っても影響しないよう、先に取り出しておく
+    const aMeta = this.aMeta;
+    const aRawCfg = this.aMetaRaw?.decoderConfig;
     let audioReason = '';
     if (!this.hasAudio) audioReason = '音声機能が無効';
-    else if (!this.aMeta) audioReason = 'AACのdecoderConfigが取得できていない';
+    else if (!aMeta) audioReason = 'AACのdecoderConfigが取得できていない';
     else if (p.audio.length === 0) audioReason = '音声チャンクが0件';
     const withAudio = audioReason === '';
     const as = withAudio ? new EncodedAudioPacketSource('aac') : undefined;
@@ -449,7 +481,7 @@ export class Recorder {
     const audioJob = (async () => {
       if (!as) return;
       for (let i = 0; i < p.audio.length; i++) {
-        await as.add(toPacket(p.audio[i].chunk), i === 0 ? this.aMeta : undefined);
+        await as.add(toPacket(p.audio[i].chunk), i === 0 ? aMeta : undefined);
       }
       as.close();
     })();
@@ -459,8 +491,8 @@ export class Recorder {
     const buffer = output.target.buffer;
     if (!buffer) throw new Error('出力バッファが空です');
     const blob = new Blob([buffer], { type: 'video/mp4' });
-    if (withAudio) {
-      this.checkAudioDecode(p.audio).then((m) => this.onLog(`音声チェック(エンコード結果の復号): ${m}`));
+    if (withAudio && aRawCfg) {
+      this.checkAudioDecode(aRawCfg, p.audio).then((m) => this.onLog(`音声チェック(エンコード結果の復号): ${m}`));
       this.verifyMp4(blob).then((m) => this.onLog(`音声チェック(MP4の中身): ${m}`));
     }
     this.onClip({
@@ -476,9 +508,8 @@ export class Recorder {
   }
 
   // エンコード済み音声を実際に復号して、無音でないか(RMS)を確認する診断
-  private async checkAudioDecode(chunks: AChunk[]): Promise<string> {
+  private async checkAudioDecode(cfg: AudioDecoderConfig, chunks: AChunk[]): Promise<string> {
     try {
-      const cfg = this.aMetaRaw!.decoderConfig!;
       const support = await AudioDecoder.isConfigSupported(cfg);
       if (!support.supported) return `復号非対応(${cfg.codec})`;
       let samples = 0;
@@ -565,6 +596,7 @@ export class Recorder {
     await this.audioCtx?.close();
     this.stream?.getTracks().forEach((t) => t.stop());
     await this.wakeLock?.release().catch(() => {});
-    this.onLog('録画停止');
+    this.resetState();
+    this.onLog('録画停止(バッファをリセットしました)');
   }
 }

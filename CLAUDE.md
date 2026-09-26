@@ -63,7 +63,8 @@ Claude の実行状態(何をしているかの説明)や作業結果の表示�
   - 外部の CDN・フォント・API を追加しない(必要になったら CSP を見直す)
   - `frame-ancestors` は meta では効かないため未設定
 - GitHub Actions は [.github/workflows/deploy.yml](.github/workflows/deploy.yml) でコミット SHA に固定している(コメントにバージョン)。更新は [.github/dependabot.yml](.github/dependabot.yml) の Dependabot(npm と Actions、週次)が出す PR で行う
-- 公開先 `uk197666.github.io` は、同じアカウントの他の Pages サイトと同一オリジン。カメラ/マイクの許可や localStorage が共有されるため、このアカウントの Pages には信頼できるサイトだけを置く。GitHub アカウントの 2 要素認証も有効にしておく
+- 公開先 `uk197666.github.io` は、同じアカウントの他の Pages サイトと同一オリジン。カメラ/マイクの許可や localStorage が共有されるため、このアカウントの Pages には信頼できるサイトだけを置く。GitHub アカウントの 2 要素認証は設定しない方針(乗っ取られると悪意あるコードが配信されカメラ/マイクを悪用されるリスクは承知の上。パスワードの使い回しはしない)
+- 画面には、折りたたみの「使い方」セクション(クリップ一覧とログの間、既定で閉じる)がある。文言は [src/main.ts](src/main.ts) のテンプレート内。機能や注意点を変えたら、あわせて更新する
 - 検証: CSP 付きビルドを `vite preview` で動かし、Edge(フェイクカメラ)で録画 → ハイライト → クリップ生成まで CSP 違反 0 件で通ることを確認済み
 
 ## ストレージ・メモリ方針(確定)

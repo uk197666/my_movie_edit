@@ -30,3 +30,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 td { padding: 2px 8px; font-size: 12px; }
 details { margin: 12px 0; }
 summary { padding: 8px 0; color: #aaa; }
+.usage { font-size: 14px; line-height: 1.6; }
+.usage h3 { font-size: 14px; margin: 14px 0 4px; color: #ddd; }
+.usage ul, .usage ol { margin: 0; padding-left: 22px; }
+.usage li { margin: 2px 0; }
+.usage .warn { color: #ffb454; font-weight: bold; }

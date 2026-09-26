@@ -37,10 +37,6 @@ export type Clip = {
 
 export type Settings = { preSec: number; postSec: number };
 
-/** エンコーダの映像サイズを何から決めるか: video要素(videoWidth/Height) か、VideoFrame(displayWidth/Height) か */
-export type SizeSource = 'video' | 'frame' | 'canvas';
-export type StartOptions = { sizeSource: SizeSource; thumb?: HTMLCanvasElement };
-
 export type Stats = {
   bufferedSec: number;
   bufferedMB: number;
@@ -150,9 +146,6 @@ export class Recorder {
   private nextClipId = 1;
   private wakeLock?: WakeLockSentinel;
   private stream?: MediaStream;
-  private sizeSource: SizeSource = 'video';
-  private thumb?: HTMLCanvasElement;
-  private frameLogged = false;
   private workCanvas?: HTMLCanvasElement;
   private workCtx?: CanvasRenderingContext2D;
 
@@ -167,19 +160,12 @@ export class Recorder {
   }
 
   /** audioCtx はタップ操作の中で作成・resume 済みのものを渡す(iOS は操作外だと suspended のままになるため) */
-  async start(
-    stream: MediaStream,
-    video: HTMLVideoElement,
-    audioCtx: AudioContext,
-    options: StartOptions = { sizeSource: 'video' },
-  ): Promise<void> {
+  async start(stream: MediaStream, video: HTMLVideoElement, audioCtx: AudioContext): Promise<void> {
     this.resetState();
-    this.sizeSource = options.sizeSource;
-    this.thumb = options.thumb;
     this.stream = stream;
     video.srcObject = stream;
     await video.play();
-    // エンコーダは最初のフレームの実サイズで作る(video.videoWidth は向きの反映が遅れることがあるため当てにしない)
+    // エンコーダは最初のフレーム処理(captureFrame)で、そのときの映像サイズに合わせて作る
 
     try {
       await this.startAudio(stream, audioCtx);
@@ -216,7 +202,6 @@ export class Recorder {
     this.wakeLock = undefined;
     this.aMeta = undefined;
     this.aMetaRaw = undefined;
-    this.frameLogged = false;
     this.lastKeyTs = -Infinity;
     this.epoch = { id: this.epoch.id, width: 0, height: 0 }; // 次のフレームでエンコーダを作り直させる
     this.vRing = [];
@@ -281,35 +266,22 @@ export class Recorder {
       return;
     }
     const ts = Math.round(now * 1000);
-    const init = { timestamp: ts, duration: 33_333 };
-    // canvas 方式: iOS Safari の VideoFrame(video) は回転前(センサー向き=横)の画素を返すため、
-    // 表示どおりの向きに描画される canvas を経由して、正しい向きの画素から VideoFrame を作る
-    let frame: VideoFrame;
-    if (this.sizeSource === 'canvas') {
-      const w = video.videoWidth & ~1;
-      const h = video.videoHeight & ~1;
-      if (w === 0 || h === 0) return;
-      const cv = (this.workCanvas ??= document.createElement('canvas'));
-      if (cv.width !== w || cv.height !== h) {
-        cv.width = w;
-        cv.height = h;
-      }
-      const ctx = (this.workCtx ??= cv.getContext('2d')!);
-      ctx.drawImage(video, 0, 0, w, h);
-      frame = new VideoFrame(cv, init);
-    } else {
-      frame = new VideoFrame(video, init);
-    }
-    if (!this.frameLogged) {
-      this.frameLogged = true;
-      this.logFrame(frame, video);
-    }
-    // iOS Safari では VideoFrame のサイズが video 要素と食い違う(向きの反映が違う)ことがあるため、基準を切り替えられるようにしている
-    const width = (this.sizeSource === 'frame' ? frame.displayWidth : video.videoWidth) & ~1;
-    const height = (this.sizeSource === 'frame' ? frame.displayHeight : video.videoHeight) & ~1;
-    if (width > 0 && height > 0 && (width !== this.epoch.width || height !== this.epoch.height)) {
+    // iOS Safari の VideoFrame(video) は回転前(センサー向き=横)の画素を返し、そのままエンコードすると
+    // 横長や引き伸ばしになる。表示どおりの向きで描画される canvas を経由して VideoFrame を作る
+    const width = video.videoWidth & ~1;
+    const height = video.videoHeight & ~1;
+    if (width === 0 || height === 0) return;
+    if (width !== this.epoch.width || height !== this.epoch.height) {
       this.onOrientationChange(width, height, video);
     }
+    const cv = (this.workCanvas ??= document.createElement('canvas'));
+    if (cv.width !== width || cv.height !== height) {
+      cv.width = width;
+      cv.height = height;
+    }
+    const ctx = (this.workCtx ??= cv.getContext('2d')!);
+    ctx.drawImage(video, 0, 0, width, height);
+    const frame = new VideoFrame(cv, { timestamp: ts, duration: 33_333 });
     const venc = this.venc;
     if (!venc) {
       frame.close();
@@ -325,24 +297,6 @@ export class Recorder {
       this.fps = (this.frameCount * 1000) / (now - this.fpsWindowStart);
       this.frameCount = 0;
       this.fpsWindowStart = now;
-    }
-  }
-
-  // 診断: 最初のフレームの各種サイズ・回転情報をログに出し、サムネイルに描画してピクセルの向きを目で確認できるようにする
-  private logFrame(frame: VideoFrame, video: HTMLVideoElement) {
-    const f = frame as VideoFrame & { rotation?: number; flip?: boolean };
-    const r = f.visibleRect;
-    this.onLog(
-      `フレーム: coded=${f.codedWidth}x${f.codedHeight} display=${f.displayWidth}x${f.displayHeight} ` +
-        `visible=${r ? `${r.width}x${r.height}` : '?'} rotation=${f.rotation ?? '未対応'} flip=${f.flip ?? '未対応'} ` +
-        `video要素=${video.videoWidth}x${video.videoHeight} 基準=${this.sizeSource}`,
-    );
-    const canvas = this.thumb;
-    const ctx = canvas?.getContext('2d');
-    if (canvas && ctx) {
-      canvas.width = 120;
-      canvas.height = Math.max(1, Math.round((120 * frame.displayHeight) / frame.displayWidth));
-      ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
     }
   }
 

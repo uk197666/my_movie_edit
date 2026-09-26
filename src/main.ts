@@ -13,16 +13,6 @@ app.innerHTML = `
     <label>後 <input id="post" type="number" min="1" max="60" value="5" inputmode="numeric" /> 秒</label>
   </div>
   <div class="row">
-    <label>サイズの基準
-      <select id="sizeSource">
-        <option value="canvas" selected>canvas経由(向き補正)</option>
-        <option value="video">映像要素</option>
-        <option value="frame">フレーム</option>
-      </select>
-    </label>
-    <canvas id="thumb" width="0" height="0"></canvas>
-  </div>
-  <div class="row">
     <button id="start">録画開始</button>
     <button id="stop" disabled>停止</button>
   </div>
@@ -104,10 +94,7 @@ startBtn.addEventListener('click', async () => {
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       audio: true,
     });
-    await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx, {
-      sizeSource: (['video', 'frame', 'canvas'] as const).find((v) => v === $<HTMLSelectElement>('#sizeSource').value) ?? 'canvas',
-      thumb: $<HTMLCanvasElement>('#thumb'),
-    });
+    await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx);
     resetMarkBadge();
     stopBtn.disabled = false;
     markBtn.disabled = false;

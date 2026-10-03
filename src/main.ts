@@ -1,6 +1,6 @@
 // spike: 循環バッファ録画 + ハイライト切り出しの実機検証画面(iPhone Safari)
 import './style.css';
-import { Recorder, type Clip } from './recorder';
+import { Recorder, type Clip, type HighlightLabel } from './recorder';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -21,15 +21,15 @@ app.innerHTML = `
     <h3>2. 撮る</h3>
     <ol>
       <li>画面の「前」「後」の欄で、ハイライトに残す秒数を決めます(初期値は前10秒・後5秒)。</li>
-      <li>「録画開始」を押します。映像が画面いっぱいに広がり、上に録画時間、右下に★、左上に「停止」が表示されます(ホーム画面から開くと画面全体、Safari で開くとアドレスバーを除いた範囲に広がります)。</li>
-      <li>見せ場のプレーのあとに、映像の右下の★ボタンを押します。押した瞬間にボタンが光り、押した回数が表示されます。</li>
+      <li>「録画開始」を押します。映像が画面いっぱいに広がり、上に録画時間、右下にプレーのボタン、左上に「停止」が表示されます(ホーム画面から開くと画面全体、Safari で開くとアドレスバーを除いた範囲に広がります)。</li>
+      <li>右下には、左から「ディフェンス」(緑)「パス」(青)「シュート」(赤)のボタンがあります。見せ場のプレーのあとに、プレーに合ったボタンを押します。押した瞬間にボタンが光り、ボタンごとに押した回数が表示されます。</li>
       <li>押した時点の「前○秒〜後○秒」だけが、1本のクリップとして残ります。それ以外の映像は保存されず、自動で捨てられます。</li>
       <li>近いタイミングで続けて押した場合、範囲が重なる部分は1本にまとめられます。</li>
     </ol>
     <h3>3. 確認して保存する</h3>
     <ol>
       <li>撮影が終わったら、左上の「停止」を押します。元の画面に戻ります。停止は1回触れるだけで止まるので、撮影中は触れないよう気をつけてください。</li>
-      <li>「クリップ」の一覧で、再生して確認します。</li>
+      <li>「クリップ」の一覧で、再生して確認します。見出しには、押したボタンの名前(「シュート」など)が出ます。範囲が重なって1本にまとめられたクリップは、「パス→シュート」のように押した順に並びます。</li>
       <li>クリップには、最初からチェックが付いています。残さないクリップは、チェックを外すか「削除」を押します。</li>
       <li>「選択した○本を保存」を押し、「○本のビデオを保存」を選ぶと、チェックしたクリップがまとめて写真アプリに保存されます。「すべて解除」「すべて選択」でチェックを一度に切り替えられます。</li>
       <li>1本だけ保存したいときは、そのクリップの「共有/保存」を押し、「ビデオを保存」を選びます。</li>
@@ -52,7 +52,11 @@ app.innerHTML = `
   </details>
   <div id="stage">
     <video id="preview" autoplay muted playsinline></video>
-    <button id="mark" disabled aria-label="ハイライト">★<span id="badge" hidden>0</span></button>
+    <div id="marks">
+      <button class="mark defense" data-label="ディフェンス" disabled>ディフェンス<span class="badge" hidden>0</span></button>
+      <button class="mark pass" data-label="パス" disabled>パス<span class="badge" hidden>0</span></button>
+      <button class="mark shoot" data-label="シュート" disabled>シュート<span class="badge" hidden>0</span></button>
+    </div>
     <button id="stop" disabled>■ 停止</button>
     <div id="elapsed"><span class="dot">●</span> <span id="elapsedTime">00:00</span></div>
   </div>
@@ -85,7 +89,8 @@ app.innerHTML = `
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const startBtn = $<HTMLButtonElement>('#start');
 const stopBtn = $<HTMLButtonElement>('#stop');
-const markBtn = $<HTMLButtonElement>('#mark');
+const markBtns = [...document.querySelectorAll<HTMLButtonElement>('.mark')];
+const setMarksDisabled = (disabled: boolean) => markBtns.forEach((b) => (b.disabled = disabled));
 const logEl = $('#log');
 const statsEl = $('#stats');
 const clipsEl = $('#clips');
@@ -152,11 +157,22 @@ shareSelectedBtn.addEventListener('click', async () => {
   }
 });
 
+// クリップの見出し用: 押した順に「→」でつなぎ、同じボタンが続いたら「×n」にまとめる(例: パス→シュート×2)
+const formatLabels = (labels: HighlightLabel[]) => {
+  const runs: { label: HighlightLabel; n: number }[] = [];
+  for (const label of labels) {
+    const last = runs[runs.length - 1];
+    if (last?.label === label) last.n++;
+    else runs.push({ label, n: 1 });
+  }
+  return runs.map((r) => (r.n > 1 ? `${r.label}×${r.n}` : r.label)).join('→');
+};
+
 const addClip = (clip: Clip) => {
   const div = document.createElement('div');
   div.className = 'clip';
   div.innerHTML = `
-    <label class="pick"><input type="checkbox" checked /><span>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</span></label>
+    <label class="pick"><input type="checkbox" checked /><span><strong class="clipLabel">${formatLabels(clip.labels)}</strong>#${clip.id} ${clip.durationSec.toFixed(1)}秒 / ${(clip.blob.size / 1e6).toFixed(1)}MB / ${clip.width}x${clip.height}(${clip.height > clip.width ? '縦' : '横'}) / 音声${clip.hasAudio ? 'あり' : 'なし'}</span></label>
     <video src="${clip.url}" controls playsinline preload="metadata"></video>
     <div class="row"><button data-act="share">共有/保存</button><button data-act="del">削除</button></div>
   `;
@@ -214,7 +230,7 @@ startBtn.addEventListener('click', async () => {
     await recorder.start(stream, $<HTMLVideoElement>('#preview'), audioCtx);
     resetMarkBadge();
     stopBtn.disabled = false;
-    markBtn.disabled = false;
+    setMarksDisabled(false);
     // 録画中は映像を全画面にする(iOS の Fullscreen API では重ねたボタンが出ないため CSS で広げる)
     recStartAt = performance.now();
     $('#elapsedTime').textContent = formatElapsed(0);
@@ -236,29 +252,36 @@ startBtn.addEventListener('click', async () => {
   }
 });
 
-let markCount = 0;
-markBtn.addEventListener('click', () => {
-  const msg = recorder.highlight();
-  log(msg);
-  if (msg.startsWith('録画中ではありません')) return;
-  markCount++;
-  const badge = $('#badge');
-  badge.hidden = false;
-  badge.textContent = String(markCount);
-  markBtn.classList.remove('flash');
-  void markBtn.offsetWidth; // アニメーションを再起動
-  markBtn.classList.add('flash');
-});
+// 押した回数はボタン(プレーの種類)ごとに数える
+const markCounts = new Map<HighlightLabel, number>();
+for (const btn of markBtns) {
+  const label = btn.dataset.label as HighlightLabel;
+  btn.addEventListener('click', () => {
+    const msg = recorder.highlight(label);
+    log(msg);
+    if (msg.startsWith('録画中ではありません')) return;
+    const count = (markCounts.get(label) ?? 0) + 1;
+    markCounts.set(label, count);
+    const badge = btn.querySelector<HTMLElement>('.badge')!;
+    badge.hidden = false;
+    badge.textContent = String(count);
+    btn.classList.remove('flash');
+    void btn.offsetWidth; // アニメーションを再起動
+    btn.classList.add('flash');
+  });
+}
 
 const resetMarkBadge = () => {
-  markCount = 0;
-  $('#badge').hidden = true;
-  $('#badge').textContent = '0';
+  markCounts.clear();
+  for (const badge of document.querySelectorAll<HTMLElement>('.mark .badge')) {
+    badge.hidden = true;
+    badge.textContent = '0';
+  }
 };
 
 stopBtn.addEventListener('click', async () => {
   stopBtn.disabled = true;
-  markBtn.disabled = true;
+  setMarksDisabled(true);
   document.body.classList.remove('recording');
   window.clearInterval(statsTimer);
   await recorder.stop();

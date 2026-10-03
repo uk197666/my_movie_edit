@@ -17,15 +17,21 @@ type Epoch = { id: number; width: number; height: number; meta?: EncodedVideoChu
 type VChunk = { ts: number; key: boolean; chunk: EncodedVideoChunk; epoch: Epoch };
 type AChunk = { ts: number; chunk: EncodedAudioChunk };
 
+/** ハイライトボタンの種類(プレーの種別) */
+export type HighlightLabel = 'ディフェンス' | 'パス' | 'シュート';
+
 type Pending = {
   endTs: number;
   video: VChunk[];
   audio: AChunk[];
   markedAt: number;
+  /** 押されたボタン(統合された場合は押した順) */
+  labels: HighlightLabel[];
 };
 
 export type Clip = {
   id: number;
+  labels: HighlightLabel[];
   blob: Blob;
   url: string;
   durationSec: number;
@@ -422,7 +428,7 @@ export class Recorder {
   }
 
   /** ハイライトを記録する。戻り値は結果メッセージ */
-  highlight(): string {
+  highlight(label: HighlightLabel): string {
     if (!this.running || this.lastVideoTs < 0 || this.vRing.length === 0) return '録画中ではありません';
     const { preSec, postSec } = this.getSettings();
     const T = this.lastVideoTs;
@@ -432,7 +438,8 @@ export class Recorder {
     const overlapped = this.pending.find((p) => startTs <= p.endTs);
     if (overlapped) {
       overlapped.endTs = endTs;
-      return '直前のハイライトと範囲が重なったため統合しました';
+      overlapped.labels.push(label);
+      return `${label}: 直前のハイライトと範囲が重なったため統合しました`;
     }
 
     let idx = 0;
@@ -445,8 +452,8 @@ export class Recorder {
     const video = this.vRing.slice(idx);
     const base = video[0].ts;
     const audio = this.aRing.filter((a) => a.ts >= base);
-    this.pending.push({ endTs, video, audio, markedAt: T });
-    return `ハイライトを記録しました(後${postSec}秒待機中)`;
+    this.pending.push({ endTs, video, audio, markedAt: T, labels: [label] });
+    return `${label}を記録しました(後${postSec}秒待機中)`;
   }
 
   private finalizeReady() {
@@ -512,6 +519,7 @@ export class Recorder {
     this.verifyMp4(blob).then((m) => this.onLog(`MP4の中身: ${m}`));
     this.onClip({
       id: this.nextClipId++,
+      labels: p.labels,
       blob,
       url: URL.createObjectURL(blob),
       durationSec: (Math.min(p.endTs, videos[videos.length - 1].ts) - base) / 1e6,
